@@ -1,0 +1,161 @@
+# =============================================================================
+# ADAS Sound Detector – Central Hyperparameter Configuration
+# All modules load from this file; never hardcode values in source code.
+# =============================================================================
+
+# ── Audio ─────────────────────────────────────────────────────────────────────
+audio:
+  sample_rate: 16000          # Hz – YAMNet 요구 사양
+  mono: true
+  # YAMNet minimum input: 15,600 samples = 0.975 s @ 16 kHz
+  min_samples: 15600
+  window_duration: 0.975      # seconds (== min_samples / sample_rate)
+  hop_duration: 0.5           # seconds – sliding window stride (실시간 추론)
+
+# ── Mel-Spectrogram (YAMNet 내부 파라미터 참조용) ──────────────────────────────
+mel:
+  n_fft: 512
+  hop_length: 160             # 10 ms @ 16 kHz
+  win_length: 400             # 25 ms @ 16 kHz
+  n_mels: 64
+  fmin: 125
+  fmax: 7500
+
+# ── Dataset ───────────────────────────────────────────────────────────────────
+dataset:
+  name: UrbanSound8K
+  raw_dir: data/raw
+  noise_dir: data/noise
+  processed_dir: data/processed
+  # UrbanSound8K class IDs (0~9)
+  # car_horn=1, siren=8 만 양성 클래스로 사용.
+  # 나머지 8개 클래스(0,2,3,4,5,6,7,9)는 background 로 묶어 음성 클래스로 활용.
+  target_classes:
+    car_horn: 1
+    siren: 8          # 수정: 10 → 8 (UrbanSound8K 실제 classID)
+  # background 클래스: 운전과 무관한 나머지 UrbanSound8K 클래스를 하나로 묶음.
+  # 모델이 "아무 소리도 아닌 것"을 학습해 오경보(false positive)를 줄임.
+  background_classes:
+    air_conditioner: 0
+    children_playing: 2
+    dog_bark: 3
+    drilling: 4
+    engine_idling: 5
+    gun_shot: 6
+    jackhammer: 7
+    street_music: 9
+  # background 샘플 수 (양성 클래스와 균형 맞추기 위해 캡 적용)
+  background_samples_cap: 800   # car_horn(429) + siren(929) ≈ 1358 → background 약 800개
+  # DEMAND STRAFFIC — 실제 도로 교통 소음 (300s × 16ch → 4s 클립으로 분할)
+  # 추가하면 background 총합 ≈ 2000개 (car_horn 수준과 균형)
+  straffic_dir: data/raw/straffic
+  # Folds reserved for validation / test (나머지는 train)
+  val_folds: [9]
+  test_folds: [10]
+
+# ── SNR Augmentation ──────────────────────────────────────────────────────────
+augmentation:
+  snr_levels_db: [10, 5, 0, -5]   # 도로 소음 합성 SNR 레벨
+  time_shift_max_ms: 100           # ±100 ms random shift
+  pitch_shift_steps: [-1, 0, 1]    # semitones
+
+# ── YAMNet Embedding ──────────────────────────────────────────────────────────
+yamnet:
+  tfhub_url: "https://tfhub.dev/google/yamnet/1"
+  embedding_dim: 1024
+  cache_dir: data/processed/embeddings
+  # 배치 크기: 임베딩 추출 시 한 번에 처리할 파일 수 (메모리에 따라 조정)
+  batch_size: 32
+  # 파인튜닝된 YAMNet 체크포인트 경로 (null = TF-Hub 원본 사용)
+  # finetune.py 실행 후 자동 생성됨
+  finetuned_dir: models/yamnet_finetuned  # Phase2: finetuned YAMNet으로 임베딩 재추출
+
+# ── Classifier (Custom DNN) ───────────────────────────────────────────────────
+# num_classes는 dataset.target_classes 개수로 자동 결정됩니다 (수동 입력 불필요).
+classifier:
+  hidden_units: [512, 256, 64]  # Dense layer sizes (심화: 레이어 추가)
+  batch_norm: true
+  dropout_rate: 0.4             # 심화: 과적합 방지 강화
+  l2_reg: 1.0e-4
+  activation: relu
+  output_activation: sigmoid
+
+# ── Training ──────────────────────────────────────────────────────────────────
+training:
+  batch_size: 128
+  epochs: 200                   # 심화: 100 → 200
+  learning_rate: 1.0e-3
+  early_stopping:
+    patience: 15                # 심화: 10 → 15
+    monitor: val_loss
+    restore_best_weights: true
+  reduce_lr:
+    factor: 0.5
+    patience: 7                 # 심화: 5 → 7
+    min_lr: 1.0e-7              # 심화: 더 낮은 min_lr
+    monitor: val_loss
+  class_weight_auto: true
+  # positive 클래스(car_horn, siren)에 추가 가중치 boost.
+  # siren은 샘플이 많아 balanced weight가 0.63으로 낮게 책정됨 →
+  # 안전을 위해 positive 클래스 오분류 페널티를 강화.
+  # boost=2.5: car_horn 1.37→3.4, siren 0.63→1.6, background 1.47 유지
+  class_weight_positive_boost: 2.5
+  # Focal Loss: γ>0이면 CrossEntropy 대신 사용.
+  # γ=2 권장 — 쉬운 샘플(잘 맞추는) loss를 낮추고 어려운 샘플에 집중.
+  # γ=0 → CrossEntropy 동일 (비활성화)
+  focal_loss_gamma: 0.0   # 0 = standard CrossEntropy (Focal Loss 비활성화 — boost-only가 더 좋음)
+  seed: 42
+
+# ── YAMNet Fine-tuning ────────────────────────────────────────────────────────
+finetune:
+  batch_size: 16             # waveform 배치 (OOM 방지: 16→8)
+  epochs: 100               # Round2: 50 → 100
+  yamnet_lr: 5.0e-6         # Round2: 더 작게 (이미 한번 튜닝됨)
+  clf_lr: 2.0e-5            # Round2: 5e-5 → 2e-5
+  unfreeze_fraction: 0.60   # Round2: 40% → 60% (더 깊은 레이어까지)
+  early_stopping_patience: 10  # Round2: 8 → 10
+
+# ── Model Export ──────────────────────────────────────────────────────────────
+export:
+  model_dir: models
+  keras_filename: custom_classifier.h5
+  tflite_filename: adas_detector.tflite
+  quantization: int8          # int8 | float16 | none
+  target_size_mb: 5.0
+
+# ── Real-time Inference ───────────────────────────────────────────────────────
+inference:
+  device_index: null          # null = 시스템 기본 마이크
+  ring_buffer_samples: 64000   # 4.0 s @ 16 kHz — matches training clip length
+  hop_samples: 8000            # 0.5 s stride — inference every 500 ms after buffer fills
+  latency_target_ms: 30
+  e2e_latency_target_ms: 200
+  # 알림 색상: 클래스별 터미널 색상 (ANSI) — 자유롭게 추가/변경 가능
+  alert_colors:
+    car_horn: "yellow"        # yellow | red | green | cyan | magenta
+    siren: "red"
+  # Adaptive threshold
+  threshold:
+    initial: 0.5
+    k: 2.0
+    history_size: 50
+    max_value: 0.9
+    # Per-class base threshold overrides.
+    # Each class gets its own AdaptiveThreshold starting from this base.
+    # Detection is independent per class — a class fires even if it is not
+    # the argmax, as long as its own probability ≥ its threshold.
+    # Lower base → higher recall (more sensitive); raise to cut false positives.
+    per_class:
+      car_horn: 0.45    # moderate — car horns are common; keep precision up
+      siren: 0.20       # 공격적 낮춤 → siren recall 90%+ 목표
+  # Majority voting debounce
+  debounce_frames: 3
+  # Benchmarking
+  benchmark_runs: 100
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging:
+  level: INFO                 # DEBUG | INFO | WARNING | ERROR
+  format: "%(asctime)s [%(levelname)s] %(name)s – %(message)s"
+  file: null                  # null = stdout only; 경로 입력 시 파일에도 기록
+  # 예: file: "logs/pipeline.log"

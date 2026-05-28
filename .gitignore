@@ -1,0 +1,59 @@
+# ── 오디오 데이터 (용량 초과) ──────────────────────────────
+data/raw/
+data/processed/clean/
+data/processed/snr_+10dB/
+data/processed/snr_+5dB/
+data/processed/snr_+0dB/
+data/processed/snr_-5dB/
+data/processed/embeddings/
+data/noise/
+*.wav
+*.mp3
+*.flac
+*.zip
+
+# ── 모델 파일 (대용량) ────────────────────────────────────
+models/*.h5
+models/*.pkl
+models/*.npz
+models/*.npy
+models/saved_model/
+models/yamnet_finetuned/
+models/v1_classifier_frozen/
+models/v4_finetuned_60pct/
+models/v5_siren_specialist/
+models/v6_rf_classifier/
+models/v7_triple_ensemble/
+
+# ── TFLite 모델은 올림 (작고 배포용) ─────────────────────
+!models/*.tflite
+
+# ── 임시/캐시 ────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── 환경 ─────────────────────────────────────────────────
+.env
+venv/
+env/
+*.venv
+
+# ── OS ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+
+# ── 로그/임시 결과 ────────────────────────────────────────
+results/pipeline_run.log
+notebooks/plots/
