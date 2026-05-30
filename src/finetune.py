@@ -643,6 +643,25 @@ def run_finetune(config_path: str) -> None:
 
     train_df, val_df, test_df = fold_split(df, val_folds, test_folds, logger)
 
+    # ── 1b. background 샘플 수 상한 적용 (RAM OOM 방지) ──
+    # 11,000개 background를 모두 로드하면 X_train ≈ 2.86 GB (float32 × 64000).
+    # tf.data.from_tensor_slices() 가 추가 복사본을 만들어 총 5.7 GB → OOM.
+    # background를 cap_bg 개로 제한해 RAM ≤ 1.5 GB 수준으로 유지한다.
+    bg_cap: int = ft_cfg.get("background_cap", 2000)
+    path_col = train_df["path"].str.replace("\\", "/", regex=False)
+    is_snr   = path_col.str.contains("processed/snr_", regex=False)
+    clean_df = train_df[~is_snr]
+    bg_mask  = clean_df["class"] == "background"
+    n_bg     = bg_mask.sum()
+    if n_bg > bg_cap:
+        bg_idx    = clean_df[bg_mask].sample(n=bg_cap, random_state=seed).index
+        other_idx = clean_df[~bg_mask].index
+        train_df  = train_df.loc[bg_idx.union(other_idx)]
+        logger.info(
+            "background 상한 적용: %d → %d  (cap=%d, train 전체: %d)",
+            n_bg, bg_cap, bg_cap, len(train_df),
+        )
+
     # ── 2. 파형 로드 ──
     logger.info("Loading training waveforms …")
     X_train, y_train = load_waveforms(

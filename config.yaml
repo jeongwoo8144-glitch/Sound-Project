@@ -114,6 +114,7 @@ finetune:
   clf_lr: 2.0e-5            # Round2: 5e-5 → 2e-5
   unfreeze_fraction: 0.60   # Round2: 40% → 60% (더 깊은 레이어까지)
   early_stopping_patience: 10  # Round2: 8 → 10
+  background_cap: 2000      # train background 상한 (RAM OOM 방지: 12000→2000)
 
 # ── Model Export ──────────────────────────────────────────────────────────────
 export:
